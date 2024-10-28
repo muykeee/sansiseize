@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roguelike生存</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid #333;
+        }
+        #stats {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+        }
+        #gameOver {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <img id="enemyImage" src="https://media.discordapp.net/attachments/1254381472455069776/1300448769577451520/image.png?ex=6720e0cb&is=671f8f4b&hm=235090526cfafc7a645918966db086b55bfbb270232f463ed3b1aa9e99ad9e86&=&format=webp&quality=lossless&width=1294&height=1294" style="display: none;">
+    <img id="playerImage" src="https://media.discordapp.net/attachments/1254381472455069776/1300449979868905573/image.png?ex=6720e1ec&is=671f906c&hm=f227307c976099252b50d53b24f0c2e667b4b0892f04c12fcf4c5656245878c5&=&format=webp&quality=lossless&width=700&height=700" style="display: none;">
+    <div id="stats">
+        时间: <span id="time">0</span>秒<br>
+        击杀: <span id="kills">0</span><br>
+        子弹数: <span id="bulletCount">1</span>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="gameOver">
+        游戏结束<br>
+        存活时间: <span id="finalTime">0</span>秒<br>
+        击杀数: <span id="finalKills">0</span><br>
+        <button onclick="restartGame()">重新开始</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const enemyImage = document.getElementById('enemyImage');
+        const playerImage = document.getElementById('playerImage');
+        canvas.width = 800;
+        canvas.height = 600;
+
+        let game = {
+            player: {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                size: 25,
+                speed: 5,
+                bulletCount: 1
+            },
+            bullets: [],
+            enemies: [],
+            powerups: [],
+            time: 0,
+            kills: 0,
+            difficulty: 1,
+            isGameOver: false,
+            lastShot: 0,
+            shotDelay: 250
+        };
+
+        const keys = {
+            w: false,
+            s: false,
+            a: false,
+            d: false
+        };
+
+        document.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key.toLowerCase())) {
+                keys[e.key.toLowerCase()] = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key.toLowerCase())) {
+                keys[e.key.toLowerCase()] = false;
+            }
+        });
+
+        function findNearestEnemy() {
+            if (game.enemies.length === 0) return null;
+            
+            let nearestEnemy = game.enemies[0];
+            let minDistance = Number.MAX_VALUE;
+            
+            game.enemies.forEach(enemy => {
+                const dist = Math.sqrt(
+                    Math.pow(game.player.x - enemy.x, 2) + 
+                    Math.pow(game.player.y - enemy.y, 2)
+                );
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    nearestEnemy = enemy;
+                }
+            });
+            
+            return nearestEnemy;
+        }
+
+        function spawnEnemy() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            
+            switch(side) {
+                case 0: // top
+                    x = Math.random() * canvas.width;
+                    y = -20;
+                    break;
+                case 1: // right
+                    x = canvas.width + 20;
+                    y = Math.random() * canvas.height;
+                    break;
+                case 2: // bottom
+                    x = Math.random() * canvas.width;
+                    y = canvas.height + 20;
+                    break;
+                case 3: // left
+                    x = -20;
+                    y = Math.random() * canvas.height;
+                    break;
+            }
+
+            game.enemies.push({
+                x: x,
+                y: y,
+                size: 20,
+                speed: 1 + Math.random() * game.difficulty * 0.5,
+                baseSpeed: 1 + Math.random() * game.difficulty * 0.5
+            });
+        }
+
+        function spawnPowerup(x, y) {
+            const rand = Math.random() * 100;
+            let type = null;
+            
+            if (rand < 0.5) {
+                type = 'clearAll';
+            } else if (rand < 1.5) {
+                type = 'addBullet';
+            } else if (rand < 3.5) {
+                type = 'slowEnemies';
+            }
+
+            if (type) {
+                game.powerups.push({
+                    x: x,
+                    y: y,
+                    type: type,
+                    size: 10
+                });
+            }
+        }
+
+        function shootBullet() {
+            const now = Date.now();
+            if (now - game.lastShot < game.shotDelay) return;
+            
+            const nearestEnemy = findNearestEnemy();
+            if (!nearestEnemy) return;
+            
+            const dx = nearestEnemy.x - game.player.x;
+            const dy = nearestEnemy.y - game.player.y;
+            const angle = Math.atan2(dy, dx);
+
+            for (let i = 0; i < game.player.bulletCount; i++) {
+                const spread = (i - (game.player.bulletCount - 1) / 2) * 0.1;
+                game.bullets.push({
+                    x: game.player.x,
+                    y: game.player.y,
+                    speed: 10,
+                    angle: angle + spread
+                });
+            }
+            
+            game.lastShot = now;
+        }
+
+        function update() {
+            if (game.isGameOver) return;
+
+            shootBullet();
+
+            if (keys.w) game.player.y -= game.player.speed;
+            if (keys.s) game.player.y += game.player.speed;
+            if (keys.a) game.player.x -= game.player.speed;
+            if (keys.d) game.player.x += game.player.speed;
+
+            game.player.x = Math.max(game.player.size, Math.min(canvas.width - game.player.size, game.player.x));
+            game.player.y = Math.max(game.player.size, Math.min(canvas.height - game.player.size, game.player.y));
+
+            for (let i = game.bullets.length - 1; i >= 0; i--) {
+                const bullet = game.bullets[i];
+                bullet.x += Math.cos(bullet.angle) * bullet.speed;
+                bullet.y += Math.sin(bullet.angle) * bullet.speed;
+                
+                if (bullet.x < 0 || bullet.x > canvas.width || 
+                    bullet.y < 0 || bullet.y > canvas.height) {
+                    game.bullets.splice(i, 1);
+                }
+            }
+
+            for (let i = game.enemies.length - 1; i >= 0; i--) {
+                const enemy = game.enemies[i];
+                const dx = game.player.x - enemy.x;
+                const dy = game.player.y - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                enemy.x += (dx / dist) * enemy.speed;
+                enemy.y += (dy / dist) * enemy.speed;
+
+                const playerDist = Math.sqrt(
+                    Math.pow(game.player.x - enemy.x, 2) + 
+                    Math.pow(game.player.y - enemy.y, 2)
+                );
+                
+                if (playerDist < game.player.size + enemy.size) {
+                    gameOver();
+                    return;
+                }
+
+                for (let j = game.bullets.length - 1; j >= 0; j--) {
+                    const bullet = game.bullets[j];
+                    const bulletDist = Math.sqrt(
+                        Math.pow(bullet.x - enemy.x, 2) + 
+                        Math.pow(bullet.y - enemy.y, 2)
+                    );
+                    
+                    if (bulletDist < enemy.size) {
+                        spawnPowerup(enemy.x, enemy.y);
+                        game.enemies.splice(i, 1);
+                        game.bullets.splice(j, 1);
+                        game.kills++;
+                        break;
+                    }
+                }
+            }
+
+            for (let i = game.powerups.length - 1; i >= 0; i--) {
+                const powerup = game.powerups[i];
+                const dist = Math.sqrt(
+                    Math.pow(game.player.x - powerup.x, 2) + 
+                    Math.pow(game.player.y - powerup.y, 2)
+                );
+                
+                if (dist < game.player.size + powerup.size) {
+                    switch(powerup.type) {
+                        case 'addBullet':
+                            game.player.bulletCount++;
+                            break;
+                        case 'clearAll':
+                            game.enemies = [];
+                            break;
+                        case 'slowEnemies':
+                            game.enemies.forEach(enemy => {
+                                enemy.speed = enemy.baseSpeed * 0.5;
+                            });
+                            break;
+                    }
+                    game.powerups.splice(i, 1);
+                }
+            }
+
+            game.time += 1/60;
+            game.difficulty = 1 + Math.floor(game.time / 30) * 0.5;
+
+            if (Math.random() < 0.02 + (game.difficulty * 0.01)) {
+                spawnEnemy();
+            }
+
+            updateUI();
+        }
+
+        function draw() {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 画玩家
+            ctx.drawImage(playerImage, 
+                game.player.x - game.player.size, 
+                game.player.y - game.player.size, 
+                game.player.size * 2, 
+                game.player.size * 2
+            );
+
+            // 画子弹
+            ctx.fillStyle = '#ff0';
+            game.bullets.forEach(bullet => {
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 画敌人
+            game.enemies.forEach(enemy => {
+                ctx.drawImage(enemyImage, 
+                    enemy.x - enemy.size, 
+                    enemy.y - enemy.size, 
+                    enemy.size * 2, 
+                    enemy.size * 2
+                );
+            });
+
+            // 画道具
+            game.powerups.forEach(powerup => {
+                switch(powerup.type) {
+                    case 'addBullet':
+                        ctx.fillStyle = '#0f0';
+                        break;
+                    case 'clearAll':
+                        ctx.fillStyle = '#f0f';
+                        break;
+                    case 'slowEnemies':
+                        ctx.fillStyle = '#0ff';
+                        break;
+                }
+                ctx.beginPath();
+                ctx.arc(powerup.x, powerup.y, powerup.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function updateUI() {
+            document.getElementById('time').textContent = Math.floor(game.time);
+            document.getElementById('kills').textContent = game.kills;
+            document.getElementById('bulletCount').textContent = game.player.bulletCount;
+        }
+
+        function gameOver() {
+            game.isGameOver = true;
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalTime').textContent = Math.floor(game.time);
+            document.getElementById('finalKills').textContent = game.kills;
+        }
+
+        function restartGame() {
+            game = {
+                player: {
+                    x: canvas.width / 2,
+                    y: canvas.height / 2,
+                    size: 25,
+                    speed: 5,
+                    bulletCount: 1
+                },
+                bullets: [],
+                enemies: [],
+                powerups: [],
+                time: 0,
+                kills: 0,
+                difficulty: 1,
+                isGameOver: false,
+                lastShot: 0,
+                shotDelay: 250
+            };
+            document.getElementById('gameOver').style.display = 'none';
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
