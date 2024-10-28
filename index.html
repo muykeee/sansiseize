@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Roguelike生存</title>
     <style>
         body {
@@ -14,15 +14,20 @@
             align-items: center;
             height: 100vh;
             font-family: Arial, sans-serif;
+            touch-action: none;
         }
         canvas {
             border: 1px solid #333;
+            max-width: 100%;
+            max-height: 100vh;
         }
         #stats {
             position: fixed;
             top: 10px;
             left: 10px;
             color: white;
+            font-size: calc(12px + 1vw);
+            z-index: 100;
         }
         #gameOver {
             display: none;
@@ -35,6 +40,34 @@
             padding: 20px;
             text-align: center;
             border-radius: 10px;
+            font-size: calc(14px + 1vw);
+            z-index: 100;
+        }
+        #joystick {
+            position: fixed;
+            bottom: 50px;
+            left: 50px;
+            width: 100px;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: none;
+            touch-action: none;
+        }
+        #stick {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            top: 30px;
+            left: 30px;
+            touch-action: none;
+        }
+        @media (max-width: 768px) {
+            #joystick {
+                display: block;
+            }
         }
     </style>
 </head>
@@ -51,7 +84,10 @@
         游戏结束<br>
         存活时间: <span id="finalTime">0</span>秒<br>
         击杀数: <span id="finalKills">0</span><br>
-        <button onclick="restartGame()">重新开始</button>
+        <button onclick="restartGame()" style="font-size: calc(12px + 1vw); padding: 10px 20px;">重新开始</button>
+    </div>
+    <div id="joystick">
+        <div id="stick"></div>
     </div>
 
     <script>
@@ -59,8 +95,26 @@
         const ctx = canvas.getContext('2d');
         const enemyImage = document.getElementById('enemyImage');
         const playerImage = document.getElementById('playerImage');
-        canvas.width = 800;
-        canvas.height = 600;
+        
+        // 设置画布大小为窗口大小
+        function resizeCanvas() {
+            const maxWidth = 800;
+            const maxHeight = 600;
+            const windowRatio = window.innerWidth / window.innerHeight;
+            const gameRatio = maxWidth / maxHeight;
+
+            if (windowRatio < gameRatio) {
+                canvas.width = window.innerWidth * 0.95;
+                canvas.height = (canvas.width / gameRatio);
+            } else {
+                canvas.height = window.innerHeight * 0.95;
+                canvas.width = canvas.height * gameRatio;
+            }
+        }
+
+        // 初始化时调整画布大小
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
 
         let game = {
             player: {
@@ -81,6 +135,62 @@
             shotDelay: 250
         };
 
+        // 虚拟摇杆控制
+        const joystick = document.getElementById('joystick');
+        const stick = document.getElementById('stick');
+        let joystickData = {
+            touching: false,
+            startX: 0,
+            startY: 0,
+            moveX: 0,
+            moveY: 0
+        };
+
+        function handleJoystickStart(e) {
+            const touch = e.touches[0];
+            const joystickRect = joystick.getBoundingClientRect();
+            joystickData.touching = true;
+            joystickData.startX = touch.clientX - joystickRect.left;
+            joystickData.startY = touch.clientY - joystickRect.top;
+            updateStickPosition(touch.clientX - joystickRect.left, touch.clientY - joystickRect.top);
+        }
+
+        function handleJoystickMove(e) {
+            if (!joystickData.touching) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            const joystickRect = joystick.getBoundingClientRect();
+            const x = touch.clientX - joystickRect.left;
+            const y = touch.clientY - joystickRect.top;
+            updateStickPosition(x, y);
+        }
+
+        function handleJoystickEnd() {
+            joystickData.touching = false;
+            stick.style.transform = 'translate(-50%, -50%)';
+            joystickData.moveX = 0;
+            joystickData.moveY = 0;
+        }
+
+        function updateStickPosition(x, y) {
+            const deltaX = x - 50;
+            const deltaY = y - 50;
+            const distance = Math.min(50, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
+            const angle = Math.atan2(deltaY, deltaX);
+            const moveX = Math.cos(angle) * distance;
+            const moveY = Math.sin(angle) * distance;
+            
+            stick.style.transform = `translate(${moveX}px, ${moveY}px)`;
+            
+            joystickData.moveX = moveX / 50;
+            joystickData.moveY = moveY / 50;
+        }
+
+        joystick.addEventListener('touchstart', handleJoystickStart);
+        joystick.addEventListener('touchmove', handleJoystickMove);
+        joystick.addEventListener('touchend', handleJoystickEnd);
+        joystick.addEventListener('touchcancel', handleJoystickEnd);
+
         const keys = {
             w: false,
             s: false,
@@ -100,6 +210,129 @@
             }
         });
 
+        // 更新玩家位置的函数现在需要同时处理键盘和触屏输入
+        function updatePlayerPosition() {
+            let dx = 0;
+            let dy = 0;
+
+            // 键盘输入
+            if (keys.w) dy -= 1;
+            if (keys.s) dy += 1;
+            if (keys.a) dx -= 1;
+            if (keys.d) dx += 1;
+
+            // 触屏输入
+            if (joystickData.touching) {
+                dx += joystickData.moveX;
+                dy += joystickData.moveY;
+            }
+
+            // 标准化向量
+            if (dx !== 0 || dy !== 0) {
+                const length = Math.sqrt(dx * dx + dy * dy);
+                dx = dx / length;
+                dy = dy / length;
+            }
+
+            game.player.x += dx * game.player.speed;
+            game.player.y += dy * game.player.speed;
+
+            // 确保玩家不会移出画布
+            game.player.x = Math.max(game.player.size, Math.min(canvas.width - game.player.size, game.player.x));
+            game.player.y = Math.max(game.player.size, Math.min(canvas.height - game.player.size, game.player.y));
+        }
+
+        // 在 update 函数中替换原有的玩家移动代码
+        function update() {
+            if (game.isGameOver) return;
+
+            shootBullet();
+            updatePlayerPosition();
+
+            // 其余的更新逻辑保持不变
+            for (let i = game.bullets.length - 1; i >= 0; i--) {
+                const bullet = game.bullets[i];
+                bullet.x += Math.cos(bullet.angle) * bullet.speed;
+                bullet.y += Math.sin(bullet.angle) * bullet.speed;
+                
+                if (bullet.x < 0 || bullet.x > canvas.width || 
+                    bullet.y < 0 || bullet.y > canvas.height) {
+                    game.bullets.splice(i, 1);
+                }
+            }
+
+            for (let i = game.enemies.length - 1; i >= 0; i--) {
+                const enemy = game.enemies[i];
+                const dx = game.player.x - enemy.x;
+                const dy = game.player.y - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                enemy.x += (dx / dist) * enemy.speed;
+                enemy.y += (dy / dist) * enemy.speed;
+
+                const playerDist = Math.sqrt(
+                    Math.pow(game.player.x - enemy.x, 2) + 
+                    Math.pow(game.player.y - enemy.y, 2)
+                );
+                
+                if (playerDist < game.player.size + enemy.size) {
+                    gameOver();
+                    return;
+                }
+
+                for (let j = game.bullets.length - 1; j >= 0; j--) {
+                    const bullet = game.bullets[j];
+                    const bulletDist = Math.sqrt(
+                        Math.pow(bullet.x - enemy.x, 2) + 
+                        Math.pow(bullet.y - enemy.y, 2)
+                    );
+                    
+                    if (bulletDist < enemy.size) {
+                        spawnPowerup(enemy.x, enemy.y);
+                        game.enemies.splice(i, 1);
+                        game.bullets.splice(j, 1);
+                        game.kills++;
+                        break;
+                    }
+                }
+            }
+
+            for (let i = game.powerups.length - 1; i >= 0; i--) {
+                const powerup = game.powerups[i];
+                const dist = Math.sqrt(
+                    Math.pow(game.player.x - powerup.x, 2) + 
+                    Math.pow(game.player.y - powerup.y, 2)
+                );
+                
+                if (dist < game.player.size + powerup.size) {
+                    switch(powerup.type) {
+                        case 'addBullet':
+                            game.player.bulletCount++;
+                            break;
+                        case 'clearAll':
+                            game.enemies = [];
+                            break;
+                        case 'slowEnemies':
+                            game.enemies.forEach(enemy => {
+                                enemy.speed = enemy.baseSpeed * 0.5;
+                            });
+                            break;
+                    }
+                    game.powerups.splice(i, 1);
+                }
+            }
+
+            game.time += 1/60;
+            game.difficulty = 1 + Math.floor(game.time / 30) * 0.5;
+
+            if (Math.random() < 0.02 + (game.difficulty * 0.01)) {
+                spawnEnemy();
+            }
+
+            updateUI();
+        }
+
+        // 其余函数保持不变
         function findNearestEnemy() {
             if (game.enemies.length === 0) return null;
             
@@ -196,101 +429,6 @@
             }
             
             game.lastShot = now;
-        }
-
-        function update() {
-            if (game.isGameOver) return;
-
-            shootBullet();
-
-            if (keys.w) game.player.y -= game.player.speed;
-            if (keys.s) game.player.y += game.player.speed;
-            if (keys.a) game.player.x -= game.player.speed;
-            if (keys.d) game.player.x += game.player.speed;
-
-            game.player.x = Math.max(game.player.size, Math.min(canvas.width - game.player.size, game.player.x));
-            game.player.y = Math.max(game.player.size, Math.min(canvas.height - game.player.size, game.player.y));
-
-            for (let i = game.bullets.length - 1; i >= 0; i--) {
-                const bullet = game.bullets[i];
-                bullet.x += Math.cos(bullet.angle) * bullet.speed;
-                bullet.y += Math.sin(bullet.angle) * bullet.speed;
-                
-                if (bullet.x < 0 || bullet.x > canvas.width || 
-                    bullet.y < 0 || bullet.y > canvas.height) {
-                    game.bullets.splice(i, 1);
-                }
-            }
-
-            for (let i = game.enemies.length - 1; i >= 0; i--) {
-                const enemy = game.enemies[i];
-                const dx = game.player.x - enemy.x;
-                const dy = game.player.y - enemy.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                
-                enemy.x += (dx / dist) * enemy.speed;
-                enemy.y += (dy / dist) * enemy.speed;
-
-                const playerDist = Math.sqrt(
-                    Math.pow(game.player.x - enemy.x, 2) + 
-                    Math.pow(game.player.y - enemy.y, 2)
-                );
-                
-                if (playerDist < game.player.size + enemy.size) {
-                    gameOver();
-                    return;
-                }
-
-                for (let j = game.bullets.length - 1; j >= 0; j--) {
-                    const bullet = game.bullets[j];
-                    const bulletDist = Math.sqrt(
-                        Math.pow(bullet.x - enemy.x, 2) + 
-                        Math.pow(bullet.y - enemy.y, 2)
-                    );
-                    
-                    if (bulletDist < enemy.size) {
-                        spawnPowerup(enemy.x, enemy.y);
-                        game.enemies.splice(i, 1);
-                        game.bullets.splice(j, 1);
-                        game.kills++;
-                        break;
-                    }
-                }
-            }
-
-            for (let i = game.powerups.length - 1; i >= 0; i--) {
-                const powerup = game.powerups[i];
-                const dist = Math.sqrt(
-                    Math.pow(game.player.x - powerup.x, 2) + 
-                    Math.pow(game.player.y - powerup.y, 2)
-                );
-                
-                if (dist < game.player.size + powerup.size) {
-                    switch(powerup.type) {
-                        case 'addBullet':
-                            game.player.bulletCount++;
-                            break;
-                        case 'clearAll':
-                            game.enemies = [];
-                            break;
-                        case 'slowEnemies':
-                            game.enemies.forEach(enemy => {
-                                enemy.speed = enemy.baseSpeed * 0.5;
-                            });
-                            break;
-                    }
-                    game.powerups.splice(i, 1);
-                }
-            }
-
-            game.time += 1/60;
-            game.difficulty = 1 + Math.floor(game.time / 30) * 0.5;
-
-            if (Math.random() < 0.02 + (game.difficulty * 0.01)) {
-                spawnEnemy();
-            }
-
-            updateUI();
         }
 
         function draw() {
